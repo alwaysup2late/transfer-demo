@@ -2,7 +2,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { PayoutProvider } from "../src/payout.js";
-import { QuoteService } from "../src/quotes.js";
+import { QUOTE_TTL_MS, QuoteService } from "../src/quotes.js";
 import { TransferService } from "../src/transfers.js";
 
 describe("transfers API", () => {
@@ -55,6 +55,32 @@ describe("transfers API", () => {
       .send({ ...transferBody({ id: "missing", sendAmountMinor: 100_00, feeMinor: 2_99 }) });
 
     expect(res.status).toBe(404);
+  });
+
+  it("uses the quote's amounts and ignores amounts in the request body", async () => {
+    const quote = await createQuote();
+
+    const res = await request(app)
+      .post("/api/transfers")
+      .send({ ...transferBody(quote), sendAmountMinor: 1, feeMinor: 0 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.sendAmountMinor).toBe(250_00);
+    expect(res.body.feeMinor).toBe(quote.feeMinor);
+    expect(res.body.totalMinor).toBe(254_99);
+  });
+
+  it("returns 410 for an expired quote", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const expiringQuotes = new QuoteService({ now: () => now });
+    const expiringApp = createApp({ quotes: expiringQuotes, transfers: new TransferService(payout) });
+    const quote = expiringQuotes.create({ sendAmountMinor: 250_00, receiveCurrency: "MXN" });
+    now = new Date(now.getTime() + QUOTE_TTL_MS);
+
+    const res = await request(expiringApp).post("/api/transfers").send(transferBody(quote));
+
+    expect(res.status).toBe(410);
+    expect(payout.submit).not.toHaveBeenCalled();
   });
 
   it("returns the same transfer for a repeated idempotency key", async () => {

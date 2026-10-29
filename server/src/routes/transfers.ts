@@ -10,8 +10,8 @@ export function transfersRouter(quotes: QuoteService, transfers: TransferService
   router.post("/", async (req, res) => {
     console.log("Creating transfer", JSON.stringify(req.body));
 
-    const { quoteId, sendAmountMinor, feeMinor, recipient } = req.body;
-    if (!quoteId || !sendAmountMinor || !recipient?.name || !recipient?.accountNumber) {
+    const { quoteId, recipient } = req.body;
+    if (!quoteId || !recipient?.name || !recipient?.accountNumber) {
       throw new HttpError(400, "invalid_request", "Missing required fields");
     }
 
@@ -19,11 +19,15 @@ export function transfersRouter(quotes: QuoteService, transfers: TransferService
     if (!quote) {
       throw new HttpError(404, "quote_not_found", "Quote not found");
     }
+    if (quotes.isExpired(quote)) {
+      throw new HttpError(410, "quote_expired", "Quote has expired");
+    }
 
+    // Amounts come from the stored quote, never from the request body
     const transfer = await transfers.create({
       quote,
-      sendAmountMinor,
-      feeMinor: feeMinor ?? 0,
+      sendAmountMinor: quote.sendAmountMinor,
+      feeMinor: quote.feeMinor,
       recipient,
       idempotencyKey: req.header("Idempotency-Key"),
     });
