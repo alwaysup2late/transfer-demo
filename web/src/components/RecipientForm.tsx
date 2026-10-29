@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { createTransfer, type Quote, type Transfer } from "../api";
 import { formatMoney } from "../money";
 
@@ -13,6 +13,7 @@ export function RecipientForm({ quote, onSent, onBack }: RecipientFormProps) {
   const [accountNumber, setAccountNumber] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const idempotencyKey = useRef<string>(undefined);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -23,17 +24,18 @@ export function RecipientForm({ quote, onSent, onBack }: RecipientFormProps) {
       return;
     }
 
-    // Generate an idempotency key so the server can detect duplicate submissions
-    const idempotencyKey = crypto.randomUUID();
+    // One key per attempt, reused on retry so the server can detect duplicate submissions
+    idempotencyKey.current ??= crypto.randomUUID();
 
     setSending(true);
     try {
-      const transfer = await createTransfer(quote, { name, accountNumber }, idempotencyKey);
+      const transfer = await createTransfer(quote, { name, accountNumber }, idempotencyKey.current);
       onSent(transfer);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send transfer");
+    } finally {
+      setSending(false);
     }
-    setSending(false);
   }
 
   return (
@@ -46,7 +48,10 @@ export function RecipientForm({ quote, onSent, onBack }: RecipientFormProps) {
           autoComplete="off"
           placeholder=" "
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            idempotencyKey.current = undefined;
+            setName(e.target.value);
+          }}
         />
         <label htmlFor="recipientName" className="float-label">
           Recipient full name
@@ -60,7 +65,10 @@ export function RecipientForm({ quote, onSent, onBack }: RecipientFormProps) {
           autoComplete="off"
           placeholder=" "
           value={accountNumber}
-          onChange={(e) => setAccountNumber(e.target.value)}
+          onChange={(e) => {
+            idempotencyKey.current = undefined;
+            setAccountNumber(e.target.value);
+          }}
         />
         <label htmlFor="accountNumber" className="float-label">
           Account number
@@ -72,7 +80,7 @@ export function RecipientForm({ quote, onSent, onBack }: RecipientFormProps) {
         </p>
       )}
       <div className="actions" style={{ marginTop: 4 }}>
-        <button type="submit" className="btn">
+        <button type="submit" className="btn" disabled={sending}>
           {sending ? "Sending..." : `Send ${formatMoney(quote.totalMinor, quote.sendCurrency)}`}
         </button>
         <button type="button" className="btn secondary" onClick={onBack}>

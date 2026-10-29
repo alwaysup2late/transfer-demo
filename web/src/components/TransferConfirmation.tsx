@@ -1,4 +1,5 @@
 import type { Transfer } from "../api";
+import { formatMoney } from "../money";
 
 interface TransferConfirmationProps {
   transfer: Transfer;
@@ -12,13 +13,13 @@ export function TransferConfirmation({ transfer, onDone }: TransferConfirmationP
       <p className="receive-amount">
         <span className="label">{transfer.recipient.name} receives</span>
         <span className="value">
-          {(transfer.receiveAmountMinor / 100).toFixed(2)} {transfer.receiveCurrency}
+          {formatMoney(transfer.receiveAmountMinor, transfer.receiveCurrency)}
         </span>
       </p>
       <dl className="summary-rows">
         <div className="summary-row">
           <dt>Total paid</dt>
-          <dd>${(transfer.totalMinor / 100).toFixed(2)}</dd>
+          <dd>{formatMoney(transfer.totalMinor, "USD")}</dd>
         </div>
         <div className="summary-row">
           <dt>Reference</dt>

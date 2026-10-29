@@ -2,7 +2,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { PayoutProvider } from "../src/payout.js";
-import { QuoteService } from "../src/quotes.js";
+import { QUOTE_TTL_MS, QuoteService } from "../src/quotes.js";
 import { TransferService } from "../src/transfers.js";
 
 describe("transfers API", () => {
@@ -43,6 +43,17 @@ describe("transfers API", () => {
     expect(payout.submit).toHaveBeenCalled();
   });
 
+  it("uses the quote's receive amount, including for zero-decimal currencies", async () => {
+    const quoteRes = await request(app)
+      .post("/api/quotes")
+      .send({ sendAmountMinor: 250_00, sendCurrency: "USD", receiveCurrency: "JPY" });
+
+    const res = await request(app).post("/api/transfers").send(transferBody(quoteRes.body));
+
+    expect(res.status).toBe(201);
+    expect(res.body.receiveAmountMinor).toBe(quoteRes.body.receiveAmountMinor);
+  });
+
   it("returns 400 when required fields are missing", async () => {
     const res = await request(app).post("/api/transfers").send({ quoteId: "abc" });
 
@@ -57,6 +68,32 @@ describe("transfers API", () => {
     expect(res.status).toBe(404);
   });
 
+  it("uses the quote's amounts and ignores amounts in the request body", async () => {
+    const quote = await createQuote();
+
+    const res = await request(app)
+      .post("/api/transfers")
+      .send({ ...transferBody(quote), sendAmountMinor: 1, feeMinor: 0 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.sendAmountMinor).toBe(250_00);
+    expect(res.body.feeMinor).toBe(quote.feeMinor);
+    expect(res.body.totalMinor).toBe(254_99);
+  });
+
+  it("returns 410 for an expired quote", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const expiringQuotes = new QuoteService({ now: () => now });
+    const expiringApp = createApp({ quotes: expiringQuotes, transfers: new TransferService(payout) });
+    const quote = expiringQuotes.create({ sendAmountMinor: 250_00, receiveCurrency: "MXN" });
+    now = new Date(now.getTime() + QUOTE_TTL_MS);
+
+    const res = await request(expiringApp).post("/api/transfers").send(transferBody(quote));
+
+    expect(res.status).toBe(410);
+    expect(payout.submit).not.toHaveBeenCalled();
+  });
+
   it("returns the same transfer for a repeated idempotency key", async () => {
     const quote = await createQuote();
 
@@ -67,14 +104,54 @@ describe("transfers API", () => {
     expect(payout.submit).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the transfer pending when the payout fails", async () => {
+  it("returns 502 and stores nothing when the payout fails", async () => {
     vi.mocked(payout.submit).mockRejectedValue(new Error("Provider unavailable"));
     const quote = await createQuote();
 
     const res = await request(app).post("/api/transfers").send(transferBody(quote));
 
-    expect(res.status).toBe(201);
-    expect(res.body.status).toBe("pending");
+    expect(res.status).toBe(502);
+    expect(res.body.error.code).toBe("payout_failed");
+  });
+
+  it("retries the payout when a failed request is repeated with the same idempotency key", async () => {
+    vi.mocked(payout.submit).mockRejectedValueOnce(new Error("Provider unavailable"));
+    const quote = await createQuote();
+
+    const first = await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+    const second = await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(201);
+    expect(second.body.status).toBe("submitted");
+    expect(payout.submit).toHaveBeenCalledTimes(2);
+  });
+
+  it("pays out once for concurrent requests with the same idempotency key", async () => {
+    const quote = await createQuote();
+
+    const [first, second] = await Promise.all([
+      request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote)),
+      request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote)),
+    ]);
+
+    expect(first.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(payout.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 409 when an idempotency key is reused with a different recipient", async () => {
+    const quote = await createQuote();
+    await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+
+    const res = await request(app)
+      .post("/api/transfers")
+      .set("Idempotency-Key", "key-1")
+      .send({ ...transferBody(quote), recipient: { name: "Someone Else", accountNumber: "99999999" } });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("idempotency_key_reused");
+    expect(payout.submit).toHaveBeenCalledTimes(1);
   });
 
   it("returns a transfer by id", async () => {

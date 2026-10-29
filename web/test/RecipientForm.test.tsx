@@ -44,6 +44,48 @@ describe("RecipientForm", () => {
     expect(onSent).toHaveBeenCalledWith(transfer);
   });
 
+  function sentKeys(fetchMock: ReturnType<typeof vi.fn>): (string | undefined)[] {
+    return fetchMock.mock.calls.map(([, init]) => (init.headers as Record<string, string>)["Idempotency-Key"]);
+  }
+
+  it("disables the send button while the request is in flight", async () => {
+    let respond: (res: Response) => void = () => {};
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((resolve) => (respond = resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RecipientForm quote={quote} onSent={vi.fn()} onBack={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/recipient full name/i), "Maria Lopez");
+    await userEvent.type(screen.getByLabelText(/account number/i), "12345678");
+
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    const button = screen.getByRole("button", { name: /sending/i });
+    await userEvent.click(button);
+
+    expect(button).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    respond(new Response(JSON.stringify(transfer), { status: 201 }));
+    await screen.findByRole("button", { name: /send \$/i });
+  });
+
+  it("reuses the idempotency key on retry and makes a new one when the recipient changes", async () => {
+    const failure = () => new Response(JSON.stringify({ error: { code: "payout_failed", message: "Try again" } }), { status: 502 });
+    const fetchMock = vi.fn().mockImplementation(async () => failure());
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RecipientForm quote={quote} onSent={vi.fn()} onBack={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/recipient full name/i), "Maria Lopez");
+    await userEvent.type(screen.getByLabelText(/account number/i), "12345678");
+
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByRole("alert");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await userEvent.type(screen.getByLabelText(/account number/i), "9");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    const [first, second, third] = sentKeys(fetchMock);
+    expect(second).toBe(first);
+    expect(third).not.toBe(first);
+  });
+
   it("shows an error when fields are empty", async () => {
     render(<RecipientForm quote={quote} onSent={vi.fn()} onBack={vi.fn()} />);
 
