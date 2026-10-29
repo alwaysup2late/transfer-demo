@@ -73,7 +73,7 @@ export class TransferService {
       sendAmountMinor: input.sendAmountMinor,
       feeMinor: input.feeMinor,
       totalMinor: input.sendAmountMinor + input.feeMinor,
-      receiveAmountMinor: Math.round(input.sendAmountMinor * parseFloat(input.quote.rate)),
+      receiveAmountMinor: input.quote.receiveAmountMinor,
       receiveCurrency: input.quote.receiveCurrency,
       recipient: input.recipient,
       status: "pending",

@@ -43,6 +43,17 @@ describe("transfers API", () => {
     expect(payout.submit).toHaveBeenCalled();
   });
 
+  it("uses the quote's receive amount, including for zero-decimal currencies", async () => {
+    const quoteRes = await request(app)
+      .post("/api/quotes")
+      .send({ sendAmountMinor: 250_00, sendCurrency: "USD", receiveCurrency: "JPY" });
+
+    const res = await request(app).post("/api/transfers").send(transferBody(quoteRes.body));
+
+    expect(res.status).toBe(201);
+    expect(res.body.receiveAmountMinor).toBe(quoteRes.body.receiveAmountMinor);
+  });
+
   it("returns 400 when required fields are missing", async () => {
     const res = await request(app).post("/api/transfers").send({ quoteId: "abc" });
 
