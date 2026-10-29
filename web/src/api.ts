@@ -42,3 +42,35 @@ export function createQuote(sendAmountMinor: number, receiveCurrency: ReceiveCur
     body: JSON.stringify({ sendAmountMinor, sendCurrency: "USD", receiveCurrency }),
   });
 }
+
+export interface Recipient {
+  name: string;
+  accountNumber: string;
+}
+
+export interface Transfer {
+  id: string;
+  quoteId: string;
+  sendAmountMinor: number;
+  feeMinor: number;
+  totalMinor: number;
+  receiveAmountMinor: number;
+  receiveCurrency: ReceiveCurrency;
+  recipient: Recipient;
+  status: "pending" | "submitted";
+  payoutReference?: string;
+  createdAt: string;
+}
+
+export function createTransfer(quote: Quote, recipient: Recipient, idempotencyKey: string): Promise<Transfer> {
+  return requestJson<Transfer>("/api/transfers", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      quoteId: quote.id,
+      sendAmountMinor: quote.sendAmountMinor,
+      feeMinor: quote.feeMinor,
+      recipient,
+    }),
+  });
+}
