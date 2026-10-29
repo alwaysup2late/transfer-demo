@@ -3,10 +3,9 @@ import { formatMoney, formatRate } from "../money";
 
 interface QuoteSummaryProps {
   quote: Quote;
-  onContinue?: () => void;
 }
 
-export function QuoteSummary({ quote, onContinue }: QuoteSummaryProps) {
+export function QuoteSummary({ quote }: QuoteSummaryProps) {
   return (
     <section className="card" aria-label="Quote summary">
       <h2>Your quote</h2>
@@ -35,13 +34,6 @@ export function QuoteSummary({ quote, onContinue }: QuoteSummaryProps) {
         </div>
       </dl>
       <p className="muted">Quote expires at {new Date(quote.expiresAt).toLocaleTimeString()}</p>
-      {onContinue && (
-        <div className="actions">
-          <button type="button" className="btn" onClick={onContinue}>
-            Continue
-          </button>
-        </div>
-      )}
     </section>
   );
 }
