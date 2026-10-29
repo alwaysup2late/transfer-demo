@@ -93,14 +93,27 @@ describe("transfers API", () => {
     expect(payout.submit).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the transfer pending when the payout fails", async () => {
+  it("returns 502 and stores nothing when the payout fails", async () => {
     vi.mocked(payout.submit).mockRejectedValue(new Error("Provider unavailable"));
     const quote = await createQuote();
 
     const res = await request(app).post("/api/transfers").send(transferBody(quote));
 
-    expect(res.status).toBe(201);
-    expect(res.body.status).toBe("pending");
+    expect(res.status).toBe(502);
+    expect(res.body.error.code).toBe("payout_failed");
+  });
+
+  it("retries the payout when a failed request is repeated with the same idempotency key", async () => {
+    vi.mocked(payout.submit).mockRejectedValueOnce(new Error("Provider unavailable"));
+    const quote = await createQuote();
+
+    const first = await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+    const second = await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(201);
+    expect(second.body.status).toBe("submitted");
+    expect(payout.submit).toHaveBeenCalledTimes(2);
   });
 
   it("returns a transfer by id", async () => {

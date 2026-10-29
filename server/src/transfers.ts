@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { HttpError } from "./errors.js";
 import type { PayoutProvider } from "./payout.js";
 import type { Quote } from "./quotes.js";
 
@@ -69,9 +70,9 @@ export class TransferService {
       });
       transfer.status = "submitted";
     } catch (err) {
-      // Don't fail the whole request if the payout provider is unavailable,
-      // the transfer stays pending and can be retried later
-      console.log("Payout failed, transfer will remain pending", err);
+      // Nothing is stored, so a retry with the same idempotency key tries the payout again
+      console.error("Payout failed", err);
+      throw new HttpError(502, "payout_failed", "The payout could not be completed. Please try again.");
     }
 
     this.transfers.set(transfer.id, transfer);
