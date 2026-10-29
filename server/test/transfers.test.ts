@@ -116,6 +116,33 @@ describe("transfers API", () => {
     expect(payout.submit).toHaveBeenCalledTimes(2);
   });
 
+  it("pays out once for concurrent requests with the same idempotency key", async () => {
+    const quote = await createQuote();
+
+    const [first, second] = await Promise.all([
+      request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote)),
+      request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote)),
+    ]);
+
+    expect(first.status).toBe(201);
+    expect(second.body.id).toBe(first.body.id);
+    expect(payout.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 409 when an idempotency key is reused with a different recipient", async () => {
+    const quote = await createQuote();
+    await request(app).post("/api/transfers").set("Idempotency-Key", "key-1").send(transferBody(quote));
+
+    const res = await request(app)
+      .post("/api/transfers")
+      .set("Idempotency-Key", "key-1")
+      .send({ ...transferBody(quote), recipient: { name: "Someone Else", accountNumber: "99999999" } });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("idempotency_key_reused");
+    expect(payout.submit).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a transfer by id", async () => {
     const quote = await createQuote();
     const created = await request(app).post("/api/transfers").send(transferBody(quote));

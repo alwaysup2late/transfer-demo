@@ -34,19 +34,39 @@ export interface CreateTransferInput {
 
 export class TransferService {
   private readonly transfers = new Map<string, Transfer>();
-  private readonly idempotencyKeys = new Map<string, Transfer>();
+  private readonly idempotencyKeys = new Map<string, { fingerprint: string; result: Promise<Transfer> }>();
 
   constructor(private readonly payout: PayoutProvider) {}
 
   async create(input: CreateTransferInput): Promise<Transfer> {
-    // Return the existing transfer if this request has already been processed
-    if (input.idempotencyKey) {
-      const existing = this.idempotencyKeys.get(input.idempotencyKey);
-      if (existing) {
-        return existing;
-      }
+    const key = input.idempotencyKey;
+    if (!key) {
+      return this.process(input);
     }
 
+    // The key is recorded before the payout call, so a concurrent duplicate
+    // waits for the first request instead of paying out twice
+    const fingerprint = JSON.stringify([input.quote.id, input.recipient.name, input.recipient.accountNumber]);
+    const existing = this.idempotencyKeys.get(key);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new HttpError(409, "idempotency_key_reused", "Idempotency key was already used for a different request");
+      }
+      return existing.result;
+    }
+
+    const result = this.process(input);
+    this.idempotencyKeys.set(key, { fingerprint, result });
+    try {
+      return await result;
+    } catch (err) {
+      // A failed attempt must not block a retry with the same key
+      this.idempotencyKeys.delete(key);
+      throw err;
+    }
+  }
+
+  private async process(input: CreateTransferInput): Promise<Transfer> {
     const transfer: Transfer = {
       id: randomUUID(),
       quoteId: input.quote.id,
@@ -76,10 +96,6 @@ export class TransferService {
     }
 
     this.transfers.set(transfer.id, transfer);
-    if (input.idempotencyKey) {
-      this.idempotencyKeys.set(input.idempotencyKey, transfer);
-    }
-
     return transfer;
   }
 
